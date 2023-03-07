@@ -1,0 +1,331 @@
+description: |-
+  ### RoboMaker Cloud9 IDE
+  ---
+  This document produces an EC2 instance configured to be used in a Cloud9 IDE.
+schemaVersion: '0.3'
+outputs:
+  - startInstances.InstanceIds
+parameters:
+  instanceType:
+    type: String
+    default: m5.xlarge
+    description: EC2 Instance type to be used
+  volumeSize:
+    type: Integer
+    default: 50
+    description: Volume size for the EBS mounted volume
+  instanceProfileARN:
+    type: String
+    description: ARN of the instance profile to be used
+  cloud9PublicKey:
+    type: String
+    description: The Cloud9 public key copied from the environment creation wizard in the Cloud9 console
+  securityGroupIds:
+    type: StringList
+    description: The Security Group Ids for allowing Cloud9 and Nice-DCV access, separate by comma
+mainSteps:
+  - name: startInstances
+    action: 'aws:runInstances'
+    maxAttempts: 1
+    onFailure: Abort
+    inputs:
+      ImageId: ami-0e472ba40eb589f49
+      MinInstanceCount: 1
+      MaxInstanceCount: 1
+      InstanceType: '{{ instanceType }}'
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: '{{ volumeSize }}'
+            VolumeType: gp3
+      IamInstanceProfileArn: '{{ instanceProfileARN }}'
+      SecurityGroupIds: '{{ securityGroupIds }}' 
+      TagSpecifications: 
+        - ResourceType: instance
+          Tags:
+          - Key: LaunchedBy
+            Value: SSMAutomation
+          - Key: Name
+            Value: ros1-cloud9
+    description: Launch EC2 instance
+  - name: runUpdateCommand
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=''--force-confdef'' -o Dpkg::Options::=''--force-confold'' dist-upgrade -y'
+  - name: stopInstanceBeforeReboot
+    action: 'aws:changeInstanceState'
+    maxAttempts: 1
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DesiredState: stopped
+  - name: startInstanceAfterReboot
+    action: 'aws:changeInstanceState'
+    maxAttempts: 1
+    onFailure: Abort
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DesiredState: running
+  - name: installAWSCLI
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - apt-get install -y python3 python3-dev python3-pip && pip3 install --upgrade awscli
+  - name: install_https_support
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+  - name: install_build_essentials
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - apt-get install -y build-essential
+  - name: configure_swap_file
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - fallocate -l 512MB /var/swapfile && sudo chmod 600 /var/swapfile && sudo mkswap /var/swapfile && echo '/var/swapfile swap swap defaults 0 0' >> /etc/fstab
+  - name: configure_unattended_upgrades
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - 'sudo sed -i ''s|//Unattended-Upgrade::InstallOnShutdown "true";|Unattended-Upgrade::InstallOnShutdown "true";|'' /etc/apt/apt.conf.d/50unattended-upgrades'
+  - name: install_ubuntu_desktop_and_lightdm
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 2400
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ubuntu-desktop lightdm
+  - name: install_desktop_utilities
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends firefox xterm
+  - name: get_dcv_pkg
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - 'wget https://d1uj6qtbmh3dt5.cloudfront.net/2020.1/Servers/nice-dcv-2020.1-9012-ubuntu1804-x86_64.tgz && echo "7569c95465743b512f1ab191e58ea09777353b401c1ec130ee8ea344e00f8900 nice-dcv-2020.1-9012-ubuntu1804-x86_64.tgz" | sha256sum -c && tar -xvzf nice-dcv-2020.1-9012-ubuntu1804-x86_64.tgz && rm nice-dcv-2020.1-9012-ubuntu1804-x86_64.tgz'
+  - name: install_dcv
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - cd nice-dcv-2020.1-9012-ubuntu1804-x86_64 && DEBIAN_FRONTEND=noninteractive apt-get install -y ./nice-dcv-server_2020.1.9012-1_amd64.ubuntu1804.deb ./nice-xdcv_2020.1.338-1_amd64.ubuntu1804.deb
+  - name: create_dcv_conf
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - |-
+            cat << 'EOF' >> ./dcv.conf 
+            [license] 
+            [log] 
+            [display] 
+            [connectivity] 
+            web-port=8080 
+            web-use-https=false 
+            [security] 
+            authentication="none" 
+            EOF
+  - name: mv_dcv_conf
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - mv ./dcv.conf /etc/dcv/dcv.conf
+  - name: create_dcv_session
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - |-
+            cat << 'EOF' >> dcvsession
+            #!/bin/bash
+            dbus-launch gsettings set org.gnome.desktop.lockdown disable-lock-screen true
+            dbus-launch gsettings set com.ubuntu.update-notifier no-show-notifications true
+            dbus-launch gsettings set org.gnome.shell enabled-extensions "['ubuntu-dock@ubuntu.com']"
+            sudo  /sbin/iptables -A INPUT -p tcp ! -s localhost --dport 8080 -j DROP
+            sudo systemctl start dcvserver
+            sudo systemctl enable dcvserver
+            dcv create-session my-session --owner ubuntu &> /dev/null
+            sudo apt-get install -y jq &> /dev/null
+            echo DCV preview URL : http://$C9_PID.vfs.cloud9.$(curl --silent http://169.254.169.254/latest/dynamic/instance-identity/document | jq -r .region).amazonaws.com
+            EOF
+          - chmod 755 ./dcvsession
+  - name: install_python_and_pip
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - apt-get install -y python python-dev python-pip python3 python3-dev python3-pip
+  - name: update_pip
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - pip install --upgrade pip
+  - name: add_cloud9_ssh_key
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - 'echo {{ cloud9PublicKey }} >> /home/ubuntu/.ssh/authorized_keys'
+  - name: setup_cloud9
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - 'chmod u=rwx,g=rx,o=rx /home/ubuntu'
+          - apt-get -y install python
+          - 'runuser -l ubuntu -c ''curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.33.0/install.sh | bash'''
+          - echo 'source /home/ubuntu/.nvm/nvm.sh' >> /home/ubuntu/.bash_profile
+          - sudo -iu ubuntu nvm install v12.22.11
+          - 'runuser -l ubuntu -c ''curl -L https://raw.githubusercontent.com/c9/install/master/install.sh | bash'''
+  - name: install_ros_melodic
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 500
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - 'git clone https://github.com/aws-robotics/aws-robomaker-sample-application-helloworld.git -b ros1 && cd aws-robomaker-sample-application-helloworld/ && bash -c scripts/setup.sh --install-ros melodic'
+          - rm -rf aws-robomaker-sample-application-helloworld/
+          - 'echo "[[ -e /opt/ros/melodic/setup.sh ]] && source /opt/ros/melodic/setup.sh" >> /home/ubuntu/.bash_profile'
+  - name: install_vcstool
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - pip3 install vcstool
+  - name: install_rosws
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - apt install -y python3-catkin-pkg
+          - apt install -y python3-rosinstall
+  - name: install_docker
+    action: 'aws:runCommand'
+    maxAttempts: 1
+    timeoutSeconds: 600
+    inputs:
+      InstanceIds:
+        - '{{ startInstances.InstanceIds }}'
+      DocumentName: AWS-RunShellScript
+      Parameters:
+        commands:
+          - 'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg'
+          - 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null'
+          - apt-get update
+          - apt-get -y install docker-ce docker-ce-cli containerd.io
+

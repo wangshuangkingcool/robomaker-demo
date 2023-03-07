@@ -1,0 +1,158 @@
+{
+  "Description": "Create resources for RoboMaker Development Environment setup",
+  "Resources": {
+    "SSMDocumentRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "ec2-instance-builder",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com",
+                  "ssm.amazonaws.com"
+                ]
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonEC2FullAccess",
+          "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+          "arn:aws:iam::aws:policy/AWSRoboMaker_FullAccess",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "AllowPassRole",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": "iam:PassRole",
+                  "Effect": "Allow",
+                  "Resource": {"Fn::GetAtt": ["RobomakerSampleRole", "Arn"]}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "SSMDocumentProfile": {
+      "Type" : "AWS::IAM::InstanceProfile",
+      "Properties" : {
+        "InstanceProfileName": "ec2-instance-builder",
+        "Roles": [
+          {
+              "Ref": "SSMDocumentRole"
+          }
+        ]
+      }
+    },
+    "Cloud9EC2SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allow SSH and custom TCP 8080 from anywhere in IPv4",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8080,
+            "ToPort": 8080,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "RobomakerSampleRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "robomaker.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "RoleName": "robomaker-sample-role"
+      }
+    },
+    "RoboMakerECRPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "ECRPolicy",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogStreams"
+              ],
+              "Resource": { "Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/robomaker/SimulationJobs*" }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ecr:BatchGetImage",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:GetDownloadUrlForLayer"
+              ],
+              "Resource": [
+                { "Fn::Sub": "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/robomaker-*" }
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                  "ecr-public:GetAuthorizationToken",
+                  "ecr:GetAuthorizationToken"
+              ],
+              "Resource": "*"
+            }
+          ]
+        },
+        "Roles": [
+          {
+            "Ref": "RobomakerSampleRole"
+          }
+        ]
+      }
+    },
+  },
+  "Outputs": {
+    "InstanceProfileARN": {
+      "Value": {"Fn::GetAtt": ["SSMDocumentProfile", "Arn"]}
+    },
+    "RobomakerSampleRoleARN": {
+      "Value": {"Fn::GetAtt": ["RobomakerSampleRole", "Arn"]}
+    },
+    "SecurityGroupId": {
+      "Value": {
+        "Fn::GetAtt": ["Cloud9EC2SecurityGroup", "GroupId"]
+      }
+    }
+  }
+}
