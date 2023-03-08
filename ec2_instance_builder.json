@@ -131,6 +131,16 @@
                   "ecr:GetAuthorizationToken"
               ],
               "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                  "s3:*"
+              ],
+              "Resource": [
+                "arn:aws:s3:::robomaker-*",
+                "arn:aws:s3:::robomaker-*/*"
+              ]
             }
           ]
         },
